@@ -1,0 +1,58 @@
+cabal-version: 3.0
+name: port-asm
+version: 0.0.1.0
+-- synopsis: 
+-- description:
+category: Language
+homepage: https://github.com/Okuno Zankoku/port-asm
+bug-reports: https://github.com/Okuno Zankoku/port-asm/issues
+author: Okuno Zankoku
+maintainer: zankoku.okuno@gmail.com
+copyright: 2021 Okuno Zankoku
+license: BSD-3-Clause
+license-file: LICENSE
+extra-source-files: CHANGELOG.md
+
+library
+  hs-source-dirs: src
+  exposed-modules:
+    Language.PortAsm.Interpreter
+    Language.PortAsm.Syntax.Extensible
+    Language.PortAsm.Syntax.Frontend
+  -- other-modules:
+  build-depends:
+    , base >=4.11.1
+    , containers >=0.6
+    , contiguous >=0.5
+    , primitive >=0.7
+    , text >=1.2
+    , record-hasfield >=1.0
+  default-language: Haskell2010
+  ghc-options: -Wall -O2
+
+executable port-asm
+  hs-source-dirs: app
+  main-is: Main.hs
+  -- other-modules:
+  build-depends:
+    , base
+    , containers
+    , contiguous
+    , port-asm
+    , text
+  default-language: Haskell2010
+  ghc-options: -Wall -O2 -threaded
+
+test-suite test
+  hs-source-dirs: test
+  main-is: Main.hs
+  type: exitcode-stdio-1.0
+  build-depends:
+    , port-asm
+    , base
+    -- , quickcheck-classes
+    -- , tasty
+    -- , tasty-hunit
+    -- , tasty-quickcheck
+  default-language: Haskell2010
+  ghc-options: -Wall -O2
