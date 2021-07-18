@@ -37,6 +37,8 @@ type instance Map Frontend = Map.Map -- FIXME should probly be an AList here
 
 type instance XProg Frontend = Location
 
+type instance XDeclConst Frontend = Location
+
 type instance XProc Frontend = Location
 
 type instance XScope Frontend = Location

@@ -1,4 +1,4 @@
-# Revision history for port-asm
+# Revision history for ediacara
 
 ## 0.0.1.0 -- YYYY-mm-dd
 

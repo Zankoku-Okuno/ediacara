@@ -64,6 +64,7 @@ data Stop
   | InstrBadArgs
   | InstrBadValues
   | EndOfBlock
+  | StackUnderflow
   deriving(Show)
 
 type FramePointer = StackPointer
@@ -127,10 +128,10 @@ theSp arr fp
   | Arr.null arr = fp
   | otherwise = (Arr.index arr (Arr.size arr - 1)).sp
 
-theConsts :: SmallArray ScopeEnv -> ConstEnv
-theConsts xs
-  | Arr.size xs == 0 = Map.empty
-  | otherwise = (Arr.index xs (Arr.size xs - 1)).consts
+theConsts :: ConstEnv -> SmallArray ScopeEnv -> ConstEnv
+theConsts globals xs
+  | Arr.size xs == 0 = globals
+  | otherwise = globals `Map.union` (Arr.index xs (Arr.size xs - 1)).consts
 
 theScopeAddrs :: SmallArray ScopeEnv -> StackEnv
 theScopeAddrs xs

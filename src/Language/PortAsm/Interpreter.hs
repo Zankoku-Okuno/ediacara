@@ -48,26 +48,39 @@ exec :: Conf -> IO Stop
 exec conf = do
   runL load conf >>= \case
     (_, Left err) -> pure err
-    (_, Right st) -> runM loop conf st >>= \case
+    (_, Right st) -> runM execLoop conf st >>= \case
       (_, Left stop) -> pure stop
-      (_, Right ()) -> error "post-asm exited infinite loop"
+      (_, Right _) -> pure StackUnderflow
+
+execLoop :: M () -- TODO actually, this should return the return continuation name and values
+execLoop = popInstr >>= execStmt >> execLoop
 
 load :: L St
 load = do
   conf <- ask
+  globals <- loadConsts conf.program.decls
   -- TODO initialize low memory
   case Arr.find (isEntrypoint conf.programEntry) conf.program.decls of
     Just (DeclProc proc) -> do
-      frame <- mkFrame (Arr.empty, startSp conf) proc conf.programEntry
+      frame <- mkFrame globals (Arr.empty, startSp conf) proc conf.programEntry
       LSt{mem} <- getLoaderState
       pure St{mem,frame,stack=[]}
+    Just _ -> errorWithoutStackTrace "internalError Language.PortAsm.Interpreter.load"
     Nothing -> throwError ProgEntryUnknown
   where
   isEntrypoint :: ProcName Frontend -> Decl Frontend -> Bool
   isEntrypoint entryName (DeclProc proc) = entryName `Map.member` proc.entries
+  isEntrypoint _ _ = False
 
-loop :: M ()
-loop = popInstr >>= execStmt >> loop
+loadConsts :: SmallArray (Decl Frontend) -> L ConstEnv
+loadConsts = go Map.empty . toList
+  where
+  go acc [] = pure acc
+  go acc (DeclConst{var,expr}:rest) = do
+    val <- evalConstExpr (fromConstBinds acc) expr
+    go (Map.insert var val acc) rest
+  -- TODO also create function pointers and addresses for global data
+  go acc (_:rest) = go acc rest
 
 ------------------------------------ Evaluator ------------------------------------
 
@@ -117,25 +130,27 @@ execInstr _ = const $ throwError InstrUnknown
 ------------------------------------ Helpers ------------------------------------
 
 mkFrame :: forall m. (MonadError Stop m, MonadIO m)
-        => (SmallArray ScopeEnv, FramePointer) -- currently active scopes (and frame pointer, in case there are no active scopes)
+        => ConstEnv -- globals
+        -> (SmallArray ScopeEnv, FramePointer) -- currently active scopes (and frame pointer, in case there are no active scopes)
         -> Proc Frontend -- procedure to search in
         -> ProcName Frontend -- entrypoint to search for
         -> m Frame
-mkFrame (scopes0, fp0) proc name = case findBlock proc name of
+mkFrame globals (scopes0, fp0) proc name = case findBlock proc name of
   Nothing -> throwError ProcEntryUnknown
   Just (reqScopes, block) -> do
-    scopes <- reallocFrame reqScopes (scopes0, fp0)
+    scopes <- reallocFrame globals reqScopes (scopes0, fp0)
     let fp = theSp scopes fp0
-    let consts = theConsts scopes -- TODO include global constants as well
+    let consts = theConsts globals scopes
     let regs = Map.empty -- TODO needs initialization with arguments
     let ip = Arr.toList block.stmts
     pure Frame{scopes,fp,consts,regs,ip}
 
 reallocFrame :: forall m. (MonadError Stop m, MonadIO m)
-        => [(Int, Scope Frontend)] -- requested scopes
+        => ConstEnv -- globals
+        -> [(Int, Scope Frontend)] -- requested scopes
         -> (SmallArray ScopeEnv, FramePointer) -- existing scopes (and frame pointer, in case there are no active scopes)
         -> m (SmallArray ScopeEnv) -- new scope state
-reallocFrame req0 (now0, fp0) = do
+reallocFrame globals req0 (now0, fp0) = do
   frameDealloc req0 0
   where
   -- first, slice off the trailing part of the existing scope that does nto agree with the request
@@ -148,7 +163,7 @@ reallocFrame req0 (now0, fp0) = do
   -- then, create new scopes and place them on top of the original
   frameAlloc :: [(Int, Scope Frontend)] -> SmallArray ScopeEnv -> m (SmallArray ScopeEnv)
   frameAlloc req now = do
-    scopes' <- scopesLoop (theConsts now) (theScopeAddrs now) (theSp now fp0) [] req
+    scopes' <- scopesLoop (theConsts globals now) (theScopeAddrs now) (theSp now fp0) [] req
     pure $ now <> scopes'
     where
     scopesLoop :: ConstEnv -- accumulated constants

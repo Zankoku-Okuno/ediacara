@@ -16,6 +16,7 @@ module Language.PortAsm.Syntax.Extensible
   , Prog(..)
   , XProg
   , Decl(..)
+  , XDeclConst
   , Proc(..)
   , XProc
   , Scope(..)
@@ -53,7 +54,7 @@ type family Var xi
 -- | name of a procedure (multiple-entry, multiple-exit, with calling convention)
 type family ProcName xi
 
--- | name of a continuation (C has one continuation accessible with `return`, but port-asm allows procedures with mutliple exit points)
+-- | name of a continuation (C has one continuation accessible with `return`, but ediacara allows procedures with mutliple exit points)
 type family ContName xi
 
 -- | name of a block (single-entry, multiple-exit unit of control flow with explicit live variables)
@@ -77,7 +78,14 @@ type family XProg xi
 
 data Decl xi
   = DeclProc (Proc xi)
+  | DeclConst
+    { declConstInfo :: XDeclConst xi
+    , var :: Var xi
+    , expr :: ConstExpr xi
+    }
   -- TODO
+
+type family XDeclConst xi
 
 ------------------------------------ Code Organization ------------------------------------
 

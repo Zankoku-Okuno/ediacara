@@ -13,9 +13,16 @@ import System.Exit (exitSuccess, exitFailure, exitWith, ExitCode(..))
 import qualified Data.Map.Strict as Map
 import qualified Data.Primitive.Contiguous as Arr
 
+-- TODO LIST
+--   goto, with args, with alloc args
+--   load/store, global data
+--   call/ret, alt ret continuations, tail call
+--   branch
+
 prog :: Prog Frontend
 prog = Prog () $ Arr.fromList
-  [ DeclProc Proc
+  [ DeclConst () "globalVar" $ ConstLit () 255
+  , DeclProc Proc
     { procInfo = ()
     , entries = Map.fromList [("_start", "_start")]
     , exits = Map.empty
@@ -53,7 +60,7 @@ prog = Prog () $ Arr.fromList
                     , var = "random"
                     , expr = ConstLit () 42
                     }
-                  , Instr () [] "debug" [VarRV "x", VarRV "y", VarRV "random"]
+                  , Instr () [] "debug" [VarRV "x", VarRV "y", VarRV "random", VarRV "globalVar"]
                   , Instr () ["z"] "add8" [VarRV "random", LitRV $ ConstLit () 95]
                   , Instr () [] "debug" [VarRV "z", VarRV "yoyoyo"]
                   , Instr () [] "exit" [LitRV (ConstLit () 0)]
