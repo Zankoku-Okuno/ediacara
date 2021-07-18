@@ -40,13 +40,14 @@ type instance XProg Frontend = Location
 type instance XProc Frontend = Location
 
 type instance XScope Frontend = Location
+type instance XScopeLet Frontend = Location
 type instance XStackAlloc Frontend = Location
 
 type instance XBlock Frontend = Location
 
 ------------------------------------ Statements ------------------------------------
 
-type instance XLet Frontend = Location
+type instance XBlockLet Frontend = Location
 type instance XInstr Frontend = Location
 type instance XRet Frontend = Location
 
@@ -60,6 +61,7 @@ type instance XConstVar Frontend = Location
 ------------------------------------ Expressions ------------------------------------
 
 deriving instance Show (Scope Frontend)
+deriving instance Show (ScopeLet Frontend)
 deriving instance Show (StackAlloc Frontend)
 deriving instance Show (Block Frontend)
 deriving instance Show (Stmt Frontend)

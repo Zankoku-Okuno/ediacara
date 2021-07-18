@@ -111,7 +111,7 @@ getBindings = M $ \_ st -> do
   pure (st, Right binds)
 
 setConst :: Var Frontend -> Value -> M ()
-setConst name val = M $ \_ st ->
+setConst name val = M $ \_ st -> do
   pure (st{frame = st.frame{consts = Map.insert name val st.frame.consts}}, Right ())
 
 setReg :: Var Frontend -> Value -> M ()

@@ -22,6 +22,9 @@ prog = Prog () $ Arr.fromList
     , scopes = Arr.fromList
       [ Scope
         { scopeInfo = ()
+        , scopeLets = Arr.fromList
+          [ ScopeLet () "yoyoyo" $ ConstLit () 3
+          ]
         , stackAlloc = Map.fromList
           [ ("x", StackAlloc
             { stackAllocInfo = ()
@@ -32,6 +35,7 @@ prog = Prog () $ Arr.fromList
         , children = Arr.fromList
           [ Scope
             { scopeInfo = ()
+            , scopeLets = Arr.empty
             , stackAlloc = Map.fromList
               [ ("y", StackAlloc
                 { stackAllocInfo = ()
@@ -44,14 +48,14 @@ prog = Prog () $ Arr.fromList
                 { blockInfo = ()
                 , binds = Map.empty
                 , stmts = Arr.fromList
-                  [ Let
+                  [ BlockLet
                     { letInfo = ()
                     , var = "random"
                     , expr = ConstLit () 42
                     }
                   , Instr () [] "debug" [VarRV "x", VarRV "y", VarRV "random"]
                   , Instr () ["z"] "add8" [VarRV "random", LitRV $ ConstLit () 95]
-                  , Instr () [] "debug" [VarRV "z"]
+                  , Instr () [] "debug" [VarRV "z", VarRV "yoyoyo"]
                   , Instr () [] "exit" [LitRV (ConstLit () 0)]
                   ]
                 })

@@ -20,13 +20,15 @@ module Language.PortAsm.Syntax.Extensible
   , XProc
   , Scope(..)
   , XScope
+  , ScopeLet(..)
+  , XScopeLet
   , StackAlloc(..)
   , XStackAlloc
   , Block(..)
   , XBlock
   -- * Implementation
   , Stmt(..)
-  , XLet
+  , XBlockLet
   , XInstr
   , XRet
   , ConstExpr(..)
@@ -91,9 +93,15 @@ type family XProc xi
 
 data Scope xi = Scope
   { scopeInfo :: XScope xi
+  , scopeLets :: SmallArray (ScopeLet xi)
   , stackAlloc :: Map xi (Var xi) (StackAlloc xi)
   , children :: SmallArray (Scope xi)
   , blocks :: Map xi (BlockName xi) (Block xi)
+  }
+data ScopeLet xi = ScopeLet
+  { scopeLetInfo :: XScopeLet xi
+  , var :: Var xi
+  , expr :: ConstExpr xi
   }
 data StackAlloc xi = StackAlloc -- stackdata arr(n) = u8 * n
   { stackAllocInfo :: XStackAlloc xi
@@ -102,6 +110,7 @@ data StackAlloc xi = StackAlloc -- stackdata arr(n) = u8 * n
   }
 
 type family XScope xi
+type family XScopeLet xi
 type family XStackAlloc xi
 
 data Block xi = Block
@@ -115,8 +124,8 @@ type family XBlock xi
 ------------------------------------ Statements ------------------------------------
 
 data Stmt xi
-  = Let
-    { letInfo :: XLet xi
+  = BlockLet
+    { letInfo :: XBlockLet xi
     , var :: Var xi
     , expr :: ConstExpr xi
     }
@@ -134,7 +143,7 @@ data Stmt xi
   --   , vals :: SmallArray (RVal xi)
   --   }
 
-type family XLet xi
+type family XBlockLet xi
 type family XInstr xi
 type family XRet xi
 

@@ -29,11 +29,12 @@ import Language.PortAsm.Interpreter.Monad
 import Language.PortAsm.Interpreter.Types
 
 import Control.Applicative ((<|>))
-import Control.Monad (when, forM_)
+import Control.Monad (when, forM, forM_)
 import Control.Monad.Except (MonadError(..))
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Reader (ask)
 import Data.Bifunctor (first)
+import Data.Foldable (toList)
 import Data.Primitive.Contiguous (SmallArray)
 import Data.Word (Word8,Word64)
 import Language.PortAsm.Syntax.Frontend (Frontend) -- FIXME have an interpreter language that can speed up identifier comparisons/lookups
@@ -90,7 +91,7 @@ evalRVal binds = \case
 
 execStmt :: Stmt Frontend -> M ()
 execStmt = \case
-  Let{var,expr} -> do
+  BlockLet{var,expr} -> do
     binds <- getBindings
     val <- evalConstExpr binds expr
     setConst var val
@@ -125,7 +126,7 @@ mkFrame (scopes0, fp0) proc name = case findBlock proc name of
   Just (reqScopes, block) -> do
     scopes <- reallocFrame reqScopes (scopes0, fp0)
     let fp = theSp scopes fp0
-    let consts = Map.empty -- TODO needs initialization with global constants and scope constants
+    let consts = theConsts scopes -- TODO include global constants as well
     let regs = Map.empty -- TODO needs initialization with arguments
     let ip = Arr.toList block.stmts
     pure Frame{scopes,fp,consts,regs,ip}
@@ -147,35 +148,41 @@ reallocFrame req0 (now0, fp0) = do
   -- then, create new scopes and place them on top of the original
   frameAlloc :: [(Int, Scope Frontend)] -> SmallArray ScopeEnv -> m (SmallArray ScopeEnv)
   frameAlloc req now = do
-    scopes' <- scopesLoop (theScopeAddrs now) (theSp now fp0) [] req
+    scopes' <- scopesLoop (theConsts now) (theScopeAddrs now) (theSp now fp0) [] req
     pure $ now <> scopes'
     where
-    scopesLoop :: Map.Map (Var Frontend) StackPointer -- accumulated freshly allocated addresses
+    scopesLoop :: ConstEnv -- accumulated constants
+               -> StackEnv -- accumulated stack addresses
                -> StackPointer -- updated stack pointer
                -> [ScopeEnv] -- freshly allocated scopes
                -> [(Int, Scope Frontend)] -- remaining scope requests
                -> m (SmallArray ScopeEnv)
-    scopesLoop _ _ revScopes' [] = pure . Arr.fromList $ reverse revScopes'
-    scopesLoop prevAddrs sp revScopes' ((i, scope):rest) = do
-      scope' <- allocScope sp prevAddrs i scope.stackAlloc
-      scopesLoop scope'.stackAddrs scope'.sp (scope' : revScopes') rest
+    scopesLoop _ _ _ revScopes' [] = pure . Arr.fromList $ reverse revScopes'
+    scopesLoop prevConsts prevAddrs sp revScopes' ((i, scope):rest) = do
+      let binds = ValBinds{consts=prevConsts,stackAddrs=Map.empty,regs=Map.empty}
+      freshConsts <- (Map.fromList <$>) . forM (toList scope.scopeLets) $ \ScopeLet{var,expr} ->
+        (var,) <$> evalConstExpr binds expr
+      let consts' = prevConsts `Map.union` freshConsts
+      scope' <- allocScope sp consts' prevAddrs i scope.stackAlloc
+      scopesLoop scope'.consts scope'.stackAddrs scope'.sp (scope' : revScopes') rest
     allocScope :: StackPointer -- current top of stack
-            -> Map.Map (Var Frontend) StackPointer -- adresses of previously-allocated stack data
+            -> ConstEnv -- previously-defined constants
+            -> StackEnv -- adresses of previously-allocated stack data
             -> Int -- scope id for the output scope
             -> Map Frontend (Var Frontend) (StackAlloc Frontend) -- allocation requests
             -> m ScopeEnv
-    allocScope sp0 addrs0 scopeId allocs =
-      allocLoop ScopeEnv{stackAddrs=addrs0,scopeId,sp=sp0} Map.empty (Map.toList allocs)-- TODO pass constant defs
+    allocScope sp0 consts addrs0 scopeId allocs = do
+      allocLoop ScopeEnv{consts,stackAddrs=addrs0,scopeId,sp=sp0} consts (Map.toList allocs)
       where
       allocLoop :: ScopeEnv -- initial scope
-                -> Map.Map (Var Frontend) Value -- constant definitions
+                -> ConstEnv -- TODO include stack allocation parameters
                 -> [(Var Frontend, StackAlloc Frontend)] -- allocation requests
                 -> m ScopeEnv -- updated scope with new allocations
       allocLoop scope _ [] = pure scope
       allocLoop scope vars ((name, alloc):rest) = do
-        let consts = Map.empty -- TODO fill with global and locat constant definitions
-            binds = ValBinds{regs = Map.empty, stackAddrs = Map.empty, consts}
+        let binds = fromConstBinds vars
         size <- evalRVal binds alloc.expr
+        -- TODO align stack pointer
         sp' <- scope.sp `bumpSp` size
         let scope' = scope{stackAddrs = Map.insert name scope.sp scope.stackAddrs, sp = sp'}
         allocLoop scope' vars rest

@@ -17,6 +17,7 @@ module Language.PortAsm.Interpreter.Types
   , FramePointer
   , Stop(..)
   , ValueBindings(..)
+  , fromConstBinds
   , onlyConstBinds
   , lookup
   , ConstEnv
@@ -25,6 +26,7 @@ module Language.PortAsm.Interpreter.Types
   , Frame(..)
   , ScopeEnv(..)
   , theSp
+  , theConsts
   , theScopeAddrs
   ) where
 
@@ -80,6 +82,10 @@ data ValueBindings = ValBinds
   , stackAddrs :: !StackEnv
   , consts :: !ConstEnv
   }
+  deriving (Show)
+
+fromConstBinds :: ConstEnv -> ValueBindings
+fromConstBinds consts = ValBinds{regs = Map.empty, stackAddrs = Map.empty, consts}
 
 onlyConstBinds :: ValueBindings -> ValueBindings
 onlyConstBinds binds = binds{stackAddrs = Map.empty, consts = Map.empty}
@@ -109,7 +115,8 @@ data Frame = Frame
 data Conts -- TODO when a function is called, save the continuations that might be taken on the stack
 
 data ScopeEnv = ScopeEnv
-  { stackAddrs :: !(Map.Map (Var Frontend) StackPointer)
+  { consts :: !ConstEnv
+  , stackAddrs :: !StackEnv
   , scopeId :: {-# UNPACK #-} !Int -- index of this scope within its paren't children array
   , sp :: {-# UNPACK #-} !StackPointer -- point on the stack where this scope ends
   }
@@ -120,7 +127,12 @@ theSp arr fp
   | Arr.null arr = fp
   | otherwise = (Arr.index arr (Arr.size arr - 1)).sp
 
-theScopeAddrs :: SmallArray ScopeEnv -> Map.Map (Var Frontend) StackPointer
+theConsts :: SmallArray ScopeEnv -> ConstEnv
+theConsts xs
+  | Arr.size xs == 0 = Map.empty
+  | otherwise = (Arr.index xs (Arr.size xs - 1)).consts
+
+theScopeAddrs :: SmallArray ScopeEnv -> StackEnv
 theScopeAddrs xs
   | Arr.size xs == 0 = Map.empty
   | otherwise = (Arr.index xs (Arr.size xs - 1)).stackAddrs
