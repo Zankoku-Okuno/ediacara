@@ -20,6 +20,8 @@ module Language.PortAsm.Syntax.Extensible
   , XProc
   , Scope(..)
   , XScope
+  , StackAlloc(..)
+  , XStackAlloc
   , Block(..)
   , XBlock
   -- * Implementation
@@ -29,6 +31,9 @@ module Language.PortAsm.Syntax.Extensible
   , XRet
   , ConstExpr(..)
   , XConstLit
+  , XConstSizeof
+  , XConstAlignof
+  , XConstVar
   , RVal(..)
   , LVal(..)
   ) where
@@ -86,12 +91,18 @@ type family XProc xi
 
 data Scope xi = Scope
   { scopeInfo :: XScope xi
-  -- , stackAlloc :: -- TODO I'll need an argument list for each reserved stack slot; calling into a deeper scope will need to provide these extra arguments
+  , stackAlloc :: Map xi (Var xi) (StackAlloc xi)
   , children :: SmallArray (Scope xi)
   , blocks :: Map xi (BlockName xi) (Block xi)
   }
+data StackAlloc xi = StackAlloc -- stackdata arr(n) = u8 * n
+  { stackAllocInfo :: XStackAlloc xi
+  , params :: SmallArray (Var xi)
+  , expr :: RVal xi
+  }
 
 type family XScope xi
+type family XStackAlloc xi
 
 data Block xi = Block
   { blockInfo :: XBlock xi
@@ -112,16 +123,16 @@ data Stmt xi
   -- TODO Move
   | Instr
     { instrInfo :: XInstr xi
-    , dst :: [(LVal xi, Typ xi)]
+    , dst :: [Var xi]
     , mnemonic :: InstrName xi
     , src :: [RVal xi]
     }
   -- TODO
-  | Ret
-    { retInfo :: XRet xi
-    , target :: ContName xi
-    , vals :: SmallArray (RVal xi)
-    }
+  -- | Ret
+  --   { retInfo :: XRet xi
+  --   , target :: ContName xi
+  --   , vals :: SmallArray (RVal xi)
+  --   }
 
 type family XLet xi
 type family XInstr xi
@@ -131,8 +142,14 @@ type family XRet xi
 
 data ConstExpr xi
   = ConstLit (XConstLit xi) Integer
+  | ConstSizeof (XConstSizeof xi) (Typ xi)
+  | ConstAlignof (XConstAlignof xi) (Typ xi)
+  | ConstVar (XConstVar xi) (Var xi)
   -- TODO
 type family XConstLit xi
+type family XConstSizeof xi
+type family XConstAlignof xi
+type family XConstVar xi
 
 data RVal xi
   = LitRV (ConstExpr xi)

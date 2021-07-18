@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Language.PortAsm.Syntax.Frontend
@@ -38,6 +40,7 @@ type instance XProg Frontend = Location
 type instance XProc Frontend = Location
 
 type instance XScope Frontend = Location
+type instance XStackAlloc Frontend = Location
 
 type instance XBlock Frontend = Location
 
@@ -50,3 +53,15 @@ type instance XRet Frontend = Location
 ------------------------------------ Expressions ------------------------------------
 
 type instance XConstLit Frontend = Location
+type instance XConstSizeof Frontend = Location
+type instance XConstAlignof Frontend = Location
+type instance XConstVar Frontend = Location
+
+------------------------------------ Expressions ------------------------------------
+
+deriving instance Show (Scope Frontend)
+deriving instance Show (StackAlloc Frontend)
+deriving instance Show (Block Frontend)
+deriving instance Show (Stmt Frontend)
+deriving instance Show (ConstExpr Frontend)
+deriving instance Show (RVal Frontend)

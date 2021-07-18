@@ -1,8 +1,18 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
-{-# OPTIONS_GHC -F -pgmF=record-dot-preprocessor #-}
+{-# OPTIONS_GHC -fplugin=RecordDotPreprocessor #-}
+{-# LANGUAGE DuplicateRecordFields, TypeApplications, FlexibleContexts, DataKinds, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances, UndecidableInstances, GADTs #-}
 
 module Language.PortAsm.Interpreter
   ( Conf(..)
@@ -10,176 +20,176 @@ module Language.PortAsm.Interpreter
   , Stop(..)
   ) where
 
+import Prelude hiding (lookup)
+
 import Language.PortAsm.Syntax.Extensible
 
+-- TODO organize
+import Language.PortAsm.Interpreter.Monad
+import Language.PortAsm.Interpreter.Types
+
+import Control.Applicative ((<|>))
+import Control.Monad (when, forM_)
+import Control.Monad.Except (MonadError(..))
 import Control.Monad.IO.Class (MonadIO(..))
-import Control.Monad.Primitive (RealWorld)
-import Data.Int (Int,Int16,Int32,Int64)
-import Data.Primitive.ByteArray (MutableByteArray,newByteArray)
-import Data.Text (Text)
-import Data.Word (Word8,Word16,Word32,Word64)
+import Control.Monad.Reader (ask)
+import Data.Bifunctor (first)
+import Data.Primitive.Contiguous (SmallArray)
+import Data.Word (Word8,Word64)
 import Language.PortAsm.Syntax.Frontend (Frontend) -- FIXME have an interpreter language that can speed up identifier comparisons/lookups
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Primitive.Contiguous as Arr
-import qualified Data.Text as T
 
 ------------------------------------ Top Level ------------------------------------
 
 exec :: Conf -> IO Stop
 exec conf = do
-  case Arr.find isEntrypoint conf.program.decls of
+  runL load conf >>= \case
+    (_, Left err) -> pure err
+    (_, Right st) -> runM loop conf st >>= \case
+      (_, Left stop) -> pure stop
+      (_, Right ()) -> error "post-asm exited infinite loop"
+
+load :: L St
+load = do
+  conf <- ask
+  -- TODO initialize low memory
+  case Arr.find (isEntrypoint conf.programEntry) conf.program.decls of
     Just (DeclProc proc) -> do
-      mem <- newByteArray 0 -- TODO create memory
-      mkFrameIO Map.empty proc conf.programEntry >>= \case -- TODO call with gloabl vars
-        Nothing -> pure "cannot find entry point"
-        Just frame -> do
-          let st = St{mem,frame,stack=[]}
-          unM loop conf st >>= \case
-            (_, Left stop) -> pure stop
-            (_, Right ()) -> pure "terminated normally"
-    Nothing -> pure "cannot find entry point"
+      frame <- mkFrame (Arr.empty, startSp conf) proc conf.programEntry
+      LSt{mem} <- getLoaderState
+      pure St{mem,frame,stack=[]}
+    Nothing -> throwError ProgEntryUnknown
   where
-  isEntrypoint :: Decl Frontend -> Bool
-  isEntrypoint (DeclProc proc) = conf.programEntry `Map.member` proc.entries
+  isEntrypoint :: ProcName Frontend -> Decl Frontend -> Bool
+  isEntrypoint entryName (DeclProc proc) = entryName `Map.member` proc.entries
 
 loop :: M ()
 loop = popInstr >>= execStmt >> loop
 
-type Stop = Text -- TODO
-
-
 ------------------------------------ Evaluator ------------------------------------
 
-data Value
-  = IntVal Integer
-  | StackAddr (MutableByteArray RealWorld) Word64
-  | MemAddr Word64
+evalConstExpr :: (MonadError Stop m) => ValueBindings -> ConstExpr Frontend -> m Value
+evalConstExpr (onlyConstBinds -> binds) = \case
+  ConstLit _ i -> pure $ fromIntegral @Integer @Value i
+  ConstSizeof _ typename -> case typename of
+    "u8" -> pure 1
+    _ -> throwError $ TypeUnknown typename
+  ConstAlignof _ typename -> case typename of
+    "u8" -> pure 1
+    _ -> throwError $ TypeUnknown typename
+  ConstVar _ var -> lookup var binds
 
-evalConstExpr :: ConstExpr Frontend -> M Value
-evalConstExpr (ConstLit _ i) = pure (IntVal i)
-
-evalRVal :: RVal Frontend -> M Value
-evalRVal (LitRV e) = evalConstExpr e
-evalRVal (VarRV x) = getVar x
+evalRVal :: (MonadError Stop m) => ValueBindings -> RVal Frontend -> m Value
+evalRVal binds = \case
+  LitRV e -> evalConstExpr binds e
+  VarRV x -> lookup x binds
 
 ------------------------------------ Instructions ------------------------------------
 
 execStmt :: Stmt Frontend -> M ()
 execStmt = \case
   Let{var,expr} -> do
-    val <- evalConstExpr expr
-    setVar var val
+    binds <- getBindings
+    val <- evalConstExpr binds expr
+    setConst var val
   Instr{dst,mnemonic,src} -> do
-    inVals <- evalRVal `mapM` src
+    binds <- getBindings
+    inVals <- evalRVal binds `mapM` src
     outVals <- execInstr mnemonic inVals
-    -- TODO assign to lvals
-    pure ()
+    when (length dst /= length outVals) $
+      throwError InstrBadValues
+    forM_ (zip dst outVals) $ uncurry setReg
 
 execInstr :: InstrName Frontend -> [Value] -> M [Value]
+execInstr "add8" = \case
+  [a, b] -> pure . (:[]) $ fromIntegral @Word8 @Value (fromIntegral a + fromIntegral b)
+  _ -> throwError InstrBadArgs
 execInstr "exit" = \case
-  [IntVal code] -> case fromIntegral @Integer @Word8 code of
-    0 -> stuck "terminated normally"
-    i -> stuck $ "terminated normally: exit code " <> T.pack (show i)
-  _ -> stuck "bad instruction args"
+  [code] -> throwError $ Exit (fromIntegral @Word64 @Word8 code)
+  _ -> throwError InstrBadArgs
 execInstr "debug" = \case
-  vals -> liftIO (printVal `mapM_` vals) >> pure []
-    where
-    printVal (IntVal i) = print i
-    printVal (StackAddr _ _) = putStrLn "<stack address>"
-    printVal (MemAddr addr) = putStrLn $ "<" ++ show addr ++ ">"
-execInstr _ = const $ stuck "unknown instruction"
+  vals -> liftIO (print `mapM_` vals) >> pure []
+execInstr _ = const $ throwError InstrUnknown
 
 ------------------------------------ Helpers ------------------------------------
 
-mkFrameIO :: VarEnv -> Proc Frontend -> ProcName Frontend -> IO (Maybe Frame)
-mkFrameIO vars proc name = case findBlock proc name of
-  Nothing -> pure Nothing
-  Just (scopes, block) -> do
-    stackData <- newByteArray 0 -- TODO figure out how much memory to allocate on the stack
+mkFrame :: forall m. (MonadError Stop m, MonadIO m)
+        => (SmallArray ScopeEnv, FramePointer) -- currently active scopes (and frame pointer, in case there are no active scopes)
+        -> Proc Frontend -- procedure to search in
+        -> ProcName Frontend -- entrypoint to search for
+        -> m Frame
+mkFrame (scopes0, fp0) proc name = case findBlock proc name of
+  Nothing -> throwError ProcEntryUnknown
+  Just (reqScopes, block) -> do
+    scopes <- reallocFrame reqScopes (scopes0, fp0)
+    let fp = theSp scopes fp0
+    let consts = Map.empty -- TODO needs initialization with global constants and scope constants
+    let regs = Map.empty -- TODO needs initialization with arguments
     let ip = Arr.toList block.stmts
-    pure $ Just Frame{stackData,vars,ip}
+    pure Frame{scopes,fp,consts,regs,ip}
 
-mkFrame :: Proc Frontend -> ProcName Frontend -> M Frame
-mkFrame proc name = do
-  let vars = Map.empty -- TODO needs initialization with initial vars
-  liftIO (mkFrameIO vars proc name) >>= \case
-    Nothing -> stuck "unknown entrypoint"
-    Just frame -> pure frame
-
-findBlock :: Proc Frontend -> ProcName Frontend -> Maybe ([Scope Frontend], Block Frontend)
-findBlock proc name = go (Arr.toList proc.scopes)
+reallocFrame :: forall m. (MonadError Stop m, MonadIO m)
+        => [(Int, Scope Frontend)] -- requested scopes
+        -> (SmallArray ScopeEnv, FramePointer) -- existing scopes (and frame pointer, in case there are no active scopes)
+        -> m (SmallArray ScopeEnv) -- new scope state
+reallocFrame req0 (now0, fp0) = do
+  frameDealloc req0 0
   where
-  go [] = Nothing
-  go (scope:rest) = case Map.lookup name scope.blocks of
-    Just block -> pure ([], block)
-    Nothing -> do
-      (parents, block) <- go (Arr.toList scope.children ++ rest)
-      pure (scope:parents, block)
+  -- first, slice off the trailing part of the existing scope that does nto agree with the request
+  frameDealloc :: [(Int, Scope Frontend)] -> Int -> m (SmallArray ScopeEnv)
+  frameDealloc [] i = pure $ Arr.clone now0 0 i
+  frameDealloc req@((scopeIx, _):rest) i
+    | i >= Arr.size now0 = frameAlloc req now0
+    | (Arr.index now0 i).scopeId /= scopeIx = frameAlloc req (Arr.clone now0 0 i)
+    | otherwise = frameDealloc rest (i + 1)
+  -- then, create new scopes and place them on top of the original
+  frameAlloc :: [(Int, Scope Frontend)] -> SmallArray ScopeEnv -> m (SmallArray ScopeEnv)
+  frameAlloc req now = do
+    scopes' <- scopesLoop (theScopeAddrs now) (theSp now fp0) [] req
+    pure $ now <> scopes'
+    where
+    scopesLoop :: Map.Map (Var Frontend) StackPointer -- accumulated freshly allocated addresses
+               -> StackPointer -- updated stack pointer
+               -> [ScopeEnv] -- freshly allocated scopes
+               -> [(Int, Scope Frontend)] -- remaining scope requests
+               -> m (SmallArray ScopeEnv)
+    scopesLoop _ _ revScopes' [] = pure . Arr.fromList $ reverse revScopes'
+    scopesLoop prevAddrs sp revScopes' ((i, scope):rest) = do
+      scope' <- allocScope sp prevAddrs i scope.stackAlloc
+      scopesLoop scope'.stackAddrs scope'.sp (scope' : revScopes') rest
+    allocScope :: StackPointer -- current top of stack
+            -> Map.Map (Var Frontend) StackPointer -- adresses of previously-allocated stack data
+            -> Int -- scope id for the output scope
+            -> Map Frontend (Var Frontend) (StackAlloc Frontend) -- allocation requests
+            -> m ScopeEnv
+    allocScope sp0 addrs0 scopeId allocs =
+      allocLoop ScopeEnv{stackAddrs=addrs0,scopeId,sp=sp0} Map.empty (Map.toList allocs)-- TODO pass constant defs
+      where
+      allocLoop :: ScopeEnv -- initial scope
+                -> Map.Map (Var Frontend) Value -- constant definitions
+                -> [(Var Frontend, StackAlloc Frontend)] -- allocation requests
+                -> m ScopeEnv -- updated scope with new allocations
+      allocLoop scope _ [] = pure scope
+      allocLoop scope vars ((name, alloc):rest) = do
+        let consts = Map.empty -- TODO fill with global and locat constant definitions
+            binds = ValBinds{regs = Map.empty, stackAddrs = Map.empty, consts}
+        size <- evalRVal binds alloc.expr
+        sp' <- scope.sp `bumpSp` size
+        let scope' = scope{stackAddrs = Map.insert name scope.sp scope.stackAddrs, sp = sp'}
+        allocLoop scope' vars rest
 
-getVar :: Var Frontend -> M Value
-getVar var = M $ \_ st -> case Map.lookup var st.frame.vars of
-  Nothing -> pure (st, Left "unknown variable")
-  Just val -> pure (st, Right val)
 
-setVar :: Var Frontend -> Value -> M ()
-setVar var val = M $ \_ st ->
-  pure (st{frame.vars = Map.insert var val st.frame.vars}, Right ())
-
-popInstr :: M (Stmt Frontend)
-popInstr = M $ \_ st -> case st.frame.ip of
-  [] -> pure (st, Left "end of block")
-  (instr:rest) -> pure (st{frame.ip = rest}, Right instr)
-
------------------------------------- Implementation Monad ------------------------------------
-
-newtype M a = M { unM :: Conf -> St -> IO (St, Either Stop a) }
-
-data Conf = Conf
-  { program :: Prog Frontend
-  , programEntry :: ProcName Frontend
-  }
-  -- TODO stuff like max stack size, max memory size, &c
-
-data St = St
-  { mem :: {-# UNPACK #-} !(MutableByteArray RealWorld)
-  , frame :: {-# LANGUAGE UNPACK #-} Frame -- current activation
-  , stack :: [Frame] -- saved activations
-  }
-
-data Frame = Frame
-  { stackData :: {-# LANGUAGE UNPACK #-} !(MutableByteArray RealWorld)
-  , vars :: VarEnv
-  , ip :: [Stmt Frontend]
-  }
-
-type VarEnv = Map.Map (Var Frontend) Value
-
-data Conts -- TODO when a function is called, save the continuations that might be taken on the stack
-
-instance Functor M where
-  fmap f action = M $ \conf st -> unM action conf st >>= \case
-    (st', Right x) -> pure (st', Right (f x))
-    (st', Left err) -> pure (st', Left err)
-
-instance Applicative M where
-  pure x = M $ \_ st -> pure (st, Right x)
-  actionF <*> actionX = M $ \conf st -> unM actionF conf st >>= \case
-    (st', Right f) -> unM actionX conf st' >>= \case
-      (st'', Right x) -> pure (st'', Right (f x))
-      (st'', Left err) -> pure (st'', Left err)
-    (st', Left err) -> pure (st', Left err)
-
-instance Monad M where
-  return = pure
-  actionX >>= k = M $ \conf st -> unM actionX conf st >>= \case
-    (st', Right x) -> unM (k x) conf st'
-    (st', Left err) -> pure (st', Left err)
-
-instance MonadIO M where
-  liftIO action = M $ \_ st -> do
-    x <- action
-    pure (st, Right x)
-
-stuck :: Stop -> M a
-stuck stop = M $ \_ st -> pure (st, Left stop)
+findBlock :: Proc Frontend -> ProcName Frontend -> Maybe ([(Int, Scope Frontend)], Block Frontend)
+findBlock proc name = go 0 proc.scopes
+  where
+  go :: Int -> SmallArray (Scope Frontend) -> Maybe ([(Int, Scope Frontend)], Block Frontend)
+  go !i !scopes
+    | i >= Arr.size scopes = Nothing
+    | otherwise =
+      let scope = Arr.index scopes i
+          here = ([(i, scope)],) <$> Map.lookup name scope.blocks
+          fromChild = first ((i, scope):) <$> go 0 scope.children
+          fromNextScope = go (i + 1) scopes
+       in here <|> fromChild <|> fromNextScope
