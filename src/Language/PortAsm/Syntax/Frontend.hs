@@ -51,6 +51,7 @@ type instance XBlock Frontend = Location
 
 type instance XBlockLet Frontend = Location
 type instance XInstr Frontend = Location
+type instance XGoto Frontend = Location
 type instance XRet Frontend = Location
 
 ------------------------------------ Expressions ------------------------------------
@@ -59,6 +60,7 @@ type instance XConstLit Frontend = Location
 type instance XConstSizeof Frontend = Location
 type instance XConstAlignof Frontend = Location
 type instance XConstVar Frontend = Location
+type instance XConstMul Frontend = Location
 
 ------------------------------------ Expressions ------------------------------------
 

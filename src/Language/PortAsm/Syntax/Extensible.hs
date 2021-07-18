@@ -31,12 +31,14 @@ module Language.PortAsm.Syntax.Extensible
   , Stmt(..)
   , XBlockLet
   , XInstr
+  , XGoto
   , XRet
   , ConstExpr(..)
   , XConstLit
   , XConstSizeof
   , XConstAlignof
   , XConstVar
+  , XConstMul
   , RVal(..)
   , LVal(..)
   ) where
@@ -113,7 +115,7 @@ data ScopeLet xi = ScopeLet
   }
 data StackAlloc xi = StackAlloc -- stackdata arr(n) = u8 * n
   { stackAllocInfo :: XStackAlloc xi
-  , params :: SmallArray (Var xi)
+  , params :: [Var xi]
   , expr :: RVal xi
   }
 
@@ -123,7 +125,7 @@ type family XStackAlloc xi
 
 data Block xi = Block
   { blockInfo :: XBlock xi
-  , binds :: Map xi (Var xi) (Typ xi)
+  , binds :: [(Var xi, Typ xi)]
   , stmts :: SmallArray (Stmt xi)
   }
 
@@ -144,6 +146,12 @@ data Stmt xi
     , mnemonic :: InstrName xi
     , src :: [RVal xi]
     }
+  | Goto
+    { gotoInfo :: XGoto xi
+    , target :: BlockName xi
+    , stackArgs :: Map xi (Var xi) [RVal xi]
+    , args :: [RVal xi]
+    }
   -- TODO
   -- | Ret
   --   { retInfo :: XRet xi
@@ -153,6 +161,7 @@ data Stmt xi
 
 type family XBlockLet xi
 type family XInstr xi
+type family XGoto xi
 type family XRet xi
 
 ------------------------------------ Expressions ------------------------------------
@@ -162,15 +171,18 @@ data ConstExpr xi
   | ConstSizeof (XConstSizeof xi) (Typ xi)
   | ConstAlignof (XConstAlignof xi) (Typ xi)
   | ConstVar (XConstVar xi) (Var xi)
+  | ConstMul (XConstMul xi) (ConstExpr xi) (ConstExpr xi)
   -- TODO
 type family XConstLit xi
 type family XConstSizeof xi
 type family XConstAlignof xi
 type family XConstVar xi
+type family XConstMul xi
 
 data RVal xi
   = LitRV (ConstExpr xi)
   | VarRV (Var xi)
+  | ScaleRV Integer (RVal xi)
   -- TODO
 
 data LVal xi

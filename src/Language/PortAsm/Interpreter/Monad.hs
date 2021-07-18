@@ -14,8 +14,11 @@ module Language.PortAsm.Interpreter.Monad
     M
   , runM
   , St(..)
+  , peekFrame
+  , setFrame
   , popInstr
   , getBindings
+  , getGlobals
   , setConst
   , setReg
   -- * Loader Monad
@@ -96,10 +99,19 @@ newtype M a = M { unM :: Conf -> St -> IO (St, Either Stop a) }
 runM :: M a -> Conf -> St -> IO (St, Either Stop a)
 runM action conf st = unM action conf st
 
+peekFrame :: M Frame
+peekFrame = M $ \_ st -> pure (st, Right st.frame)
+
+setFrame :: Frame -> M ()
+setFrame frame' = M $ \_ st -> pure (st{frame = frame'}, Right ())
+
 popInstr :: M (Stmt Frontend)
 popInstr = M $ \_ st -> case st.frame.ip of
   [] -> pure (st, Left EndOfBlock)
   (instr:rest) -> pure (st{frame = st.frame{ip = rest}}, Right instr)
+
+getGlobals :: M ConstEnv
+getGlobals = M $ \_ st -> pure (st, Right st.globals)
 
 getBindings :: M ValueBindings
 getBindings = M $ \_ st -> do
@@ -120,7 +132,8 @@ setReg name val = M $ \_ st ->
 
 
 data St = St
-  { mem :: {-# UNPACK #-} !(MutableByteArray RealWorld)
+  { globals :: !ConstEnv
+  , mem :: {-# UNPACK #-} !(MutableByteArray RealWorld)
   , frame :: {-# LANGUAGE UNPACK #-} !Frame -- current activation
   , stack :: ![Frame] -- saved activations
   }

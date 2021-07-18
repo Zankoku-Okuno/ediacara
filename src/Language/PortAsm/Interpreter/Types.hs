@@ -24,7 +24,7 @@ module Language.PortAsm.Interpreter.Types
   , StackEnv
   , RegEnv
   , Frame(..)
-  , ScopeEnv(..)
+  , ScopeRecord(..)
   , theSp
   , theConsts
   , theScopeAddrs
@@ -59,6 +59,9 @@ data Stop
   | TypeUnknown (Typ Frontend)
   | ProgEntryUnknown
   | ProcEntryUnknown
+  | StackdataBadArgs
+  | BlockUnknown (BlockName Frontend)
+  | BlockBadArgs
   | VarUnknown (Var Frontend)
   | InstrUnknown
   | InstrBadArgs
@@ -85,6 +88,15 @@ data ValueBindings = ValBinds
   }
   deriving (Show)
 
+instance Semigroup ValueBindings where
+  a <> b = ValBinds
+    { regs = a.regs `Map.union` b.regs
+    , stackAddrs = a.stackAddrs `Map.union` b.stackAddrs
+    , consts = a.consts `Map.union` b.consts
+    }
+instance Monoid ValueBindings where
+  mempty = ValBinds Map.empty Map.empty Map.empty
+
 fromConstBinds :: ConstEnv -> ValueBindings
 fromConstBinds consts = ValBinds{regs = Map.empty, stackAddrs = Map.empty, consts}
 
@@ -106,16 +118,17 @@ type RegEnv = Map.Map (Var Frontend) Value
 
 
 data Frame = Frame
-  { scopes :: {-# UNPACK #-} !(SmallArray ScopeEnv)
+  { scopes :: {-# UNPACK #-} !(SmallArray ScopeRecord)
   , fp :: !FramePointer
   , regs :: !RegEnv
   , consts :: !ConstEnv
+  , proc :: !(Proc Frontend)
   , ip :: ![Stmt Frontend]
   }
 
 data Conts -- TODO when a function is called, save the continuations that might be taken on the stack
 
-data ScopeEnv = ScopeEnv
+data ScopeRecord = ScopeRecord
   { consts :: !ConstEnv
   , stackAddrs :: !StackEnv
   , scopeId :: {-# UNPACK #-} !Int -- index of this scope within its paren't children array
@@ -123,17 +136,17 @@ data ScopeEnv = ScopeEnv
   }
   deriving (Show)
 
-theSp :: SmallArray ScopeEnv -> FramePointer -> StackPointer
+theSp :: SmallArray ScopeRecord -> FramePointer -> StackPointer
 theSp arr fp
   | Arr.null arr = fp
   | otherwise = (Arr.index arr (Arr.size arr - 1)).sp
 
-theConsts :: ConstEnv -> SmallArray ScopeEnv -> ConstEnv
+theConsts :: ConstEnv -> SmallArray ScopeRecord -> ConstEnv
 theConsts globals xs
   | Arr.size xs == 0 = globals
   | otherwise = globals `Map.union` (Arr.index xs (Arr.size xs - 1)).consts
 
-theScopeAddrs :: SmallArray ScopeEnv -> StackEnv
+theScopeAddrs :: SmallArray ScopeRecord -> StackEnv
 theScopeAddrs xs
   | Arr.size xs == 0 = Map.empty
   | otherwise = (Arr.index xs (Arr.size xs - 1)).stackAddrs
